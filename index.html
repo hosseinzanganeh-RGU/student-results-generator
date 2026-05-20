@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Student Performance Report Generator</title>
+
+  <!-- SheetJS library for reading and writing Excel files -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f4f6f8;
+      margin: 0;
+      padding: 0;
+      color: #222;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 40px auto;
+      background: white;
+      padding: 30px;
+      border-radius: 16px;
+      box-shadow: 0 4px 18px rgba(0,0,0,0.12);
+    }
+
+    h1 {
+      margin-top: 0;
+      color: #111;
+      text-align: center;
+    }
+
+    .subtitle {
+      text-align: center;
+      color: #555;
+      margin-bottom: 30px;
+    }
+
+    .section {
+      margin-bottom: 28px;
+      padding: 20px;
+      border: 1px solid #ddd;
+      border-radius: 12px;
+      background: #fafafa;
+    }
+
+    label {
+      display: block;
+      font-weight: bold;
+      margin-bottom: 8px;
+    }
+
+    input[type="file"], input[type="text"], input[type="number"] {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 10px;
+      border: 1px solid #bbb;
+      border-radius: 8px;
+      font-size: 15px;
+    }
+
+    .hint {
+      font-size: 13px;
+      color: #666;
+      margin-top: 6px;
+    }
+
+    button {
+      background: #005eb8;
+      color: white;
+      border: none;
+      padding: 14px 22px;
+      border-radius: 10px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      margin-top: 10px;
+    }
+
+    button:hover {
+      background: #004a91;
+    }
+
+    button:disabled {
+      background: #999;
+      cursor: not-allowed;
+    }
+
+    #status {
+      margin-top: 20px;
+      padding: 14px;
+      border-radius: 10px;
+      background: #eef5ff;
+      color: #003b73;
+      white-space: pre-wrap;
+      min-height: 45px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 15px;
+      font-size: 14px;
+    }
+
+    th, td {
+      border: 1px solid #ddd;
+      padding: 8px;
+      text-align: left;
+    }
+
+    th {
+      background: #f0f0f0;
+    }
+
+    .footer {
+      text-align: center;
+      margin-top: 25px;
+      color: #777;
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Student Performance Report Generator</h1>
+    <p class="subtitle">Import module marksheets and generate one Excel workbook with a separate sheet for each student.</p>
+
+    <div class="section">
+      <label for="marksheetFiles">Import Module Marksheets</label>
+      <input type="file" id="marksheetFiles" accept=".xlsx,.xls" multiple />
+      <div class="hint">Select one or more Excel marksheets. Each file should contain a sheet named <strong>Marks</strong>.</div>
+    </div>
+
+    <div class="section">
+      <label for="outputName">Results File Name</label>
+      <input type="text" id="outputName" value="Results001.xlsx" />
+      <div class="hint">The generated results file will be downloaded by your browser.</div>
+    </div>
+
+    <div class="section">
+      <label for="expectedModules">Expected Number of Modules for Profile</label>
+      <input type="number" id="expectedModules" value="8" min="1" />
+      <div class="hint">This is used for the profile rule.</div>
+    </div>
+
+    <button id="generateButton">Create Student Performance Report</button>
+
+    <div id="status">Ready. Select marksheet files to begin.</div>
+
+    <div id="summary"></div>
+
+    <div class="footer">
+      All processing is done locally in your browser. Files are not uploaded to any server.
+    </div>
+  </div>
+
+  <script>
+    const fileInput = document.getElementById('marksheetFiles');
+    const outputNameInput = document.getElementById('outputName');
+    const expectedModulesInput = document.getElementById('expectedModules');
+    const generateButton = document.getElementById('generateButton');
+    const statusBox = document.getElementById('status');
+    const summaryBox = document.getElementById('summary');
+
+    function setStatus(message) {
+      statusBox.textContent = message;
+    }
+
+    function getCellText(value) {
+      if (value === undefined || value === null) return '';
+      return String(value).trim();
+    }
+
+    function makeSafeSheetName(name) {
+      let safe = String(name || '').substring(0, 7);
+      safe = safe.replace(/[:\\/?*\[\]]/g, '');
+      safe = safe.trim();
+      if (!safe) safe = 'Student';
+      return safe.substring(0, 31);
+    }
+
+    function findStudentStartRow(rows) {
+      for (let r = 0; r < rows.length; r++) {
+        const firstCell = getCellText(rows[r][0]);
+        if (firstCell === 'No') {
+          return r + 1;
+        }
+      }
+      return -1;
+    }
+
+    function calculateProfile(finalMarks, expectedModules) {
+      const countA = finalMarks.filter(x => x === 'A').length;
+      const countB = finalMarks.filter(x => x === 'B').length;
+      const countC = finalMarks.filter(x => x === 'C').length;
+      const countD = finalMarks.filter(x => x === 'D').length;
+      const countE = finalMarks.filter(x => x === 'E').length;
+      const countF = finalMarks.filter(x => x === 'F').length;
+
+      const totalNoModule = countA + countB + countC + countD + countE + countF;
+      let profile = '';
+
+      if (totalNoModule === expectedModules) {
+        if (countF > 0 || countE > 0) {
+          profile = 'some modules are failed';
+        } else {
+          if (countD >= 4) {
+            if (countC >= 4) {
+              profile = 'C';
+            } else {
+              profile = 'D';
+            }
+          } else {
+            if (countC >= 3) {
+              if (countD > 0) {
+                profile = 'C';
+              } else {
+                profile = 'B';
+              }
+            } else {
+              if (countD < 1) {
+                if (countB >= 3) {
+                  profile = 'B';
+                } else {
+                  profile = 'A';
+                }
+              } else if (countD === 3) {
+                profile = 'C';
+              } else if (countD === 2) {
+                profile = 'B';
+              } else if (countD === 1) {
+                profile = 'B';
+              }
+            }
+          }
+        }
+      } else {
+        profile = 'Not Enough Modules';
+      }
+
+      return { countA, countB, countC, countD, countE, countF, totalNoModule, profile };
+    }
+
+    async function readExcelFile(file) {
+      const arrayBuffer = await file.arrayBuffer();
+      return XLSX.read(arrayBuffer, { type: 'array' });
+    }
+
+    generateButton.addEventListener('click', async () => {
+      const files = Array.from(fileInput.files || []);
+      const outputName = outputNameInput.value.trim() || 'Results001.xlsx';
+      const expectedModules = Number(expectedModulesInput.value) || 8;
+
+      if (files.length === 0) {
+        alert('Please select one or more marksheet Excel files first.');
+        return;
+      }
+
+      generateButton.disabled = true;
+      summaryBox.innerHTML = '';
+      setStatus('Processing marksheets, please wait...');
+
+      try {
+        const allResults = {};
+        const moduleNames = files.map(file => file.name.replace(/\.[^/.]+$/, ''));
+        const warnings = [];
+
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          const moduleName = moduleNames[i];
+
+          setStatus(`Reading ${file.name}...`);
+          await new Promise(resolve => setTimeout(resolve, 10));
+
+          let workbook;
+          try {
+            workbook = await readExcelFile(file);
+          } catch (err) {
+            warnings.push(`Could not read file: ${file.name}`);
+            continue;
+          }
+
+          if (!workbook.SheetNames.includes('Marks')) {
+            warnings.push(`Sheet named "Marks" not found in ${file.name}`);
+            continue;
+          }
+
+          const sheet = workbook.Sheets['Marks'];
+          const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+          const startRow = findStudentStartRow(rows);
+
+          if (startRow < 0) {
+            warnings.push(`Could not find the student list in ${file.name}`);
+            continue;
+          }
+
+          for (let r = startRow; r < rows.length; r++) {
+            const row = rows[r];
+            const matricNo = getCellText(row[1]);
+
+            if (!matricNo) continue;
+            if (matricNo.toUpperCase().includes('MARKER') || matricNo.toUpperCase().includes('ADMIN')) continue;
+
+            const surname = getCellText(row[2]);
+            const firstName = getCellText(row[3]);
+            const mark1 = getCellText(row[4]);
+            const grade = getCellText(row[5]);
+            const confirmed = getCellText(row[6]);
+            const finalResult = confirmed ? confirmed : grade;
+
+            const sheetName = makeSafeSheetName(matricNo);
+            const key = `S_${sheetName}`;
+
+            if (!allResults[key]) {
+              allResults[key] = {
+                sheetName: sheetName,
+                data: Array.from({ length: 12 }, () => Array(files.length).fill(''))
+              };
+
+              allResults[key].data[0][0] = matricNo;
+              allResults[key].data[0][1] = surname;
+              allResults[key].data[0][2] = firstName;
+            }
+
+            allResults[key].data[3][i] = moduleName;
+            allResults[key].data[4][i] = mark1;
+            allResults[key].data[5][i] = grade;
+            allResults[key].data[6][i] = finalResult;
+          }
+        }
+
+        const outputWorkbook = XLSX.utils.book_new();
+        const studentKeys = Object.keys(allResults);
+
+        if (studentKeys.length === 0) {
+          alert('No student records were found. Please check the marksheet format.');
+          setStatus('No student records found.');
+          generateButton.disabled = false;
+          return;
+        }
+
+        for (const key of studentKeys) {
+          const student = allResults[key];
+          const data = student.data;
+          const finalMarks = data[6].map(x => getCellText(x));
+          const profileInfo = calculateProfile(finalMarks, expectedModules);
+
+          data[8][0] = 'Num A:';
+          data[8][1] = 'Num B:';
+          data[8][2] = 'Num C:';
+          data[8][3] = 'Num D:';
+          data[8][4] = 'Num E:';
+          data[8][5] = 'Num F:';
+
+          data[9][0] = profileInfo.countA;
+          data[9][1] = profileInfo.countB;
+          data[9][2] = profileInfo.countC;
+          data[9][3] = profileInfo.countD;
+          data[9][4] = profileInfo.countE;
+          data[9][5] = profileInfo.countF;
+
+          data[10][0] = 'Profile:';
+          data[10][1] = profileInfo.profile;
+
+          let sheetName = student.sheetName;
+          let originalSheetName = sheetName;
+          let suffix = 1;
+
+          while (outputWorkbook.SheetNames.includes(sheetName)) {
+            sheetName = `${originalSheetName.substring(0, 28)}_${suffix}`;
+            suffix++;
+          }
+
+          const ws = XLSX.utils.aoa_to_sheet(data);
+
+          // Apply background colours for grades
+          const range = XLSX.utils.decode_range(ws['!ref']);
+
+          for (let R = range.s.r; R <= range.e.r; ++R) {
+            for (let C = range.s.c; C <= range.e.c; ++C) {
+
+              const cellAddress = XLSX.utils.encode_cell({ r: R, c: C });
+              const cell = ws[cellAddress];
+
+              if (!cell || !cell.v) continue;
+
+              const value = String(cell.v).trim();
+
+              if (value === 'F') {
+                cell.s = {
+                  fill: {
+                    patternType: 'solid',
+                    fgColor: { rgb: 'FF4C4C' }
+                  }
+                };
+              }
+
+              if (value === 'E') {
+                cell.s = {
+                  fill: {
+                    patternType: 'solid',
+                    fgColor: { rgb: 'C77DFF' }
+                  }
+                };
+              }
+            }
+          }
+
+          XLSX.utils.book_append_sheet(outputWorkbook, ws, sheetName);
+        }
+
+        XLSX.writeFile(outputWorkbook, outputName, {
+          cellStyles: true
+        });
+
+        let summaryHtml = `<table><thead><tr><th>Item</th><th>Value</th></tr></thead><tbody>`;
+        summaryHtml += `<tr><td>Marksheet files processed</td><td>${files.length}</td></tr>`;
+        summaryHtml += `<tr><td>Student sheets created</td><td>${studentKeys.length}</td></tr>`;
+        summaryHtml += `<tr><td>Output file</td><td>${outputName}</td></tr>`;
+        summaryHtml += `</tbody></table>`;
+
+        if (warnings.length > 0) {
+          summaryHtml += `<h3>Warnings</h3><ul>`;
+          warnings.forEach(w => summaryHtml += `<li>${w}</li>`);
+          summaryHtml += `</ul>`;
+        }
+
+        summaryBox.innerHTML = summaryHtml;
+        setStatus('Finished. Results file created successfully.');
+      } catch (err) {
+        console.error(err);
+        alert('An error occurred while generating the results. Please check the file format and try again.');
+        setStatus('Error: ' + err.message);
+      } finally {
+        generateButton.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
